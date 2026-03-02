@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+          BIN="landrop"
+          if [ "${GOOS}" = "windows" ]; then BIN="landrop.exe"; fi
+          go build -trimpath -ldflags="-s -w" -o "dist/${BIN}" ./cmd/landrop
+
+      - name: Package
+        run: |
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip "../landrop_${{ matrix.goos }}_${{ matrix.goarch }}.zip" landrop.exe
+          else
+            tar -czf "../landrop_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" landrop
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            landrop_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+            landrop_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          if-no-files-found: ignore
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: out
+
+      - name: Prepare files
+        run: |
+          find out -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} . \;
+          sha256sum *.tar.gz *.zip > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            *.zip
+            checksums.txt

@@ -1,0 +1,32 @@
+# Binaries
+landrop
+landrop.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build output
+/dist/
+/build/
+/out/
+*.test
+*.prof
+*.coverprofile
+
+# Go workspace / modules
+vendor/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+*.tmp
+*.log
