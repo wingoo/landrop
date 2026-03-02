@@ -48,7 +48,15 @@ jobs:
           mkdir -p dist
           BIN="landrop"
           if [ "${GOOS}" = "windows" ]; then BIN="landrop.exe"; fi
-          go build -trimpath -ldflags="-s -w" -o "dist/${BIN}" ./cmd/landrop
+          TARGET="./cmd/landrop"
+          if [ ! -d "$TARGET" ]; then
+            if [ -d "./cmd" ]; then
+              TARGET="./cmd"
+            else
+              TARGET="."
+            fi
+          fi
+          go build -trimpath -ldflags="-s -w" -o "dist/${BIN}" "$TARGET"
 
       - name: Package
         run: |

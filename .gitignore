@@ -1,6 +1,6 @@
 # Binaries
-landrop
-landrop.exe
+/landrop
+/landrop.exe
 *.exe
 *.dll
 *.so
