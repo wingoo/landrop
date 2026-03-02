@@ -5,23 +5,20 @@ import (
 	"math/big"
 )
 
-const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+const digits = "0123456789"
 
 func Generate(n int) (string, error) {
 	if n <= 0 {
-		l, err := rand.Int(rand.Reader, big.NewInt(5))
+		n = 4
+	}
+	out := make([]byte, n)
+	max := big.NewInt(int64(len(digits)))
+	for i := 0; i < n; i++ {
+		v, err := rand.Int(rand.Reader, max)
 		if err != nil {
 			return "", err
 		}
-		n = 6 + int(l.Int64())
-	}
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	out := make([]byte, n)
-	for i, b := range buf {
-		out[i] = alphabet[int(b)%len(alphabet)]
+		out[i] = digits[v.Int64()]
 	}
 	return string(out), nil
 }

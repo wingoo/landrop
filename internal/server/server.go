@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,10 +20,12 @@ type Config struct {
 	SaveDir          string
 	Token            string
 	Once             bool
+	TextToStdout     bool
 	ClipboardEnabled bool
 	ClipboardReady   bool
 	CopyToClipboard  func(string) error
 	MaxBodyBytes     int64
+	TextMaxBytes     int64
 }
 
 type Server struct {
@@ -34,6 +37,9 @@ type Server struct {
 func New(cfg Config) *Server {
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = 200 * 1024 * 1024
+	}
+	if cfg.TextMaxBytes <= 0 {
+		cfg.TextMaxBytes = 5 * 1024 * 1024
 	}
 	return &Server{cfg: cfg}
 }
@@ -71,23 +77,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !s.authorized(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	start := time.Now()
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
 	if err := r.ParseMultipartForm(16 << 20); err != nil {
-		http.Error(w, "invalid multipart body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid multipart body")
 		return
 	}
 	files := r.MultipartForm.File["file"]
 	if len(files) == 0 {
-		http.Error(w, "missing file", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "missing file")
 		return
 	}
 
@@ -103,13 +109,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	for _, fh := range files {
 		f, err := fh.Open()
 		if err != nil {
-			http.Error(w, "open upload failed", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "open upload failed")
 			return
 		}
 		fullPath, finalName, size, err := fs.SaveReader(s.cfg.SaveDir, fh.Filename, f)
 		_ = f.Close()
 		if err != nil {
-			http.Error(w, "save failed", http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "save failed")
 			return
 		}
 		resp.Saved = append(resp.Saved, savedItem{Name: finalName, Path: fullPath})
@@ -123,16 +129,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !s.authorized(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	start := time.Now()
-	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.TextMaxBytes)
 	contentType := r.Header.Get("Content-Type")
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 
@@ -141,30 +147,23 @@ func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 	case "text/plain", "":
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "read failed", http.StatusBadRequest)
+			writeTextReadError(w, err)
 			return
 		}
 		text = string(b)
 	case "application/x-www-form-urlencoded", "multipart/form-data":
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form body", http.StatusBadRequest)
+			writeTextReadError(w, err)
 			return
 		}
 		text = r.FormValue("text")
 	default:
-		http.Error(w, "unsupported content-type", http.StatusUnsupportedMediaType)
+		writeJSONError(w, http.StatusUnsupportedMediaType, "unsupported content-type")
 		return
 	}
 
 	if strings.TrimSpace(text) == "" {
-		http.Error(w, "empty text", http.StatusBadRequest)
-		return
-	}
-
-	name := fmt.Sprintf("text_%s.txt", time.Now().Format("20060102_150405"))
-	fullPath, finalName, _, err := fs.SaveText(s.cfg.SaveDir, name, text)
-	if err != nil {
-		http.Error(w, "save text failed", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusBadRequest, "empty text")
 		return
 	}
 
@@ -179,15 +178,33 @@ func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 
 	resp := struct {
 		OK        bool   `json:"ok"`
+		Mode      string `json:"mode"`
 		Saved     string `json:"saved"`
 		Path      string `json:"path"`
 		Clipboard bool   `json:"clipboard"`
 	}{
 		OK:        true,
-		Saved:     finalName,
-		Path:      fullPath,
 		Clipboard: clipboardCopied,
 	}
+
+	if s.cfg.TextToStdout {
+		fmt.Printf("\n----- landrop text (ip=%s at %s) -----\n%s\n----- end -----\n\n", clientIP(r), time.Now().Format(time.RFC3339), text)
+		resp.Mode = "stdout"
+		writeJSON(w, http.StatusOK, resp)
+		log.Printf("received text ip=%s output=stdout chars=%d clipboard=%t duration=%s", clientIP(r), len([]rune(text)), clipboardCopied, time.Since(start).Round(time.Millisecond))
+		s.maybeExitOnce()
+		return
+	}
+
+	name := fmt.Sprintf("text_%s.txt", time.Now().Format("20060102_150405"))
+	fullPath, finalName, _, err := fs.SaveText(s.cfg.SaveDir, name, text)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "save text failed")
+		return
+	}
+	resp.Mode = "save"
+	resp.Saved = finalName
+	resp.Path = fullPath
 	writeJSON(w, http.StatusOK, resp)
 
 	log.Printf("received text ip=%s saved=%q chars=%d clipboard=%t duration=%s", clientIP(r), fullPath, len([]rune(text)), clipboardCopied, time.Since(start).Round(time.Millisecond))
@@ -214,6 +231,22 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]any{
+		"ok":    false,
+		"error": msg,
+	})
+}
+
+func writeTextReadError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "text payload too large")
+		return
+	}
+	writeJSONError(w, http.StatusBadRequest, "invalid text body")
 }
 
 func clientIP(r *http.Request) string {

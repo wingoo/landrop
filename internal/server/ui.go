@@ -44,24 +44,30 @@ var pageTmpl = template.Must(template.New("index").Parse(`<!doctype html>
   <h3>Status</h3>
   <div id="status">Ready.</div>
   <script>
-    async function submitForm(form, enctype) {
+    async function submitForm(form, enctype, clearTextOnSuccess) {
       const status = document.getElementById('status');
       try {
         const body = enctype === 'multipart/form-data' ? new FormData(form) : new URLSearchParams(new FormData(form));
         const res = await fetch(form.action, { method: 'POST', body });
         const text = await res.text();
         status.textContent = text;
+        if (clearTextOnSuccess && res.ok) {
+          const textArea = form.querySelector('textarea[name="text"]');
+          if (textArea) {
+            textArea.value = '';
+          }
+        }
       } catch (e) {
         status.textContent = 'request failed: ' + e;
       }
     }
     document.getElementById('uploadForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      submitForm(e.target, 'multipart/form-data');
+      submitForm(e.target, 'multipart/form-data', false);
     });
     document.getElementById('textForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      submitForm(e.target, 'application/x-www-form-urlencoded');
+      submitForm(e.target, 'application/x-www-form-urlencoded', true);
     });
   </script>
 </body>

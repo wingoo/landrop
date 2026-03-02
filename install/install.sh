@@ -37,10 +37,16 @@ else
 fi
 
 echo "Resolving release: $REPO ($VERSION)"
-DOWNLOAD_URL="$(curl -fsSL "$API_URL" | grep -Eo '"browser_download_url":\s*"[^"]+"' | cut -d '"' -f 4 | grep "/${ASSET}$" || true)"
+RELEASE_JSON="$(curl -fsSL "$API_URL")"
+DOWNLOAD_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url":\s*"[^"]+"' | cut -d '"' -f 4 | grep "/${ASSET}$" || true)"
+CHECKSUM_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url":\s*"[^"]+"' | cut -d '"' -f 4 | grep '/checksums.txt$' || true)"
 
 if [[ -z "$DOWNLOAD_URL" ]]; then
   echo "Could not find asset ${ASSET} in release ${VERSION}"
+  exit 1
+fi
+if [[ -z "$CHECKSUM_URL" ]]; then
+  echo "Could not find checksums.txt in release ${VERSION}"
   exit 1
 fi
 
@@ -48,7 +54,30 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 ARCHIVE_PATH="$TMP_DIR/$ASSET"
+CHECKSUM_PATH="$TMP_DIR/checksums.txt"
 curl -fL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
+curl -fL "$CHECKSUM_URL" -o "$CHECKSUM_PATH"
+
+EXPECTED_SHA="$(grep -E "[[:space:]]${ASSET}\$" "$CHECKSUM_PATH" | awk '{print $1}' || true)"
+if [[ -z "$EXPECTED_SHA" ]]; then
+  echo "Could not find checksum entry for ${ASSET}"
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_SHA="$(sha256sum "$ARCHIVE_PATH" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL_SHA="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')"
+else
+  echo "No SHA-256 tool found (need sha256sum or shasum)"
+  exit 1
+fi
+
+if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+  echo "Checksum verification failed for ${ASSET}"
+  exit 1
+fi
+
 tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
 
 BIN_SRC="$TMP_DIR/landrop"
