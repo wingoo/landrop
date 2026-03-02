@@ -29,34 +29,29 @@ case "$OS" in
     ;;
 esac
 
-API_BASE="https://api.github.com/repos/${REPO}/releases"
 if [[ "$VERSION" == "latest" ]]; then
-  API_URL="${API_BASE}/latest"
+  DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/checksums.txt"
 else
-  API_URL="${API_BASE}/tags/${VERSION}"
+  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+  CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 fi
 
 echo "Resolving release: $REPO ($VERSION)"
-RELEASE_JSON="$(curl -fsSL "$API_URL")"
-DOWNLOAD_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url":\s*"[^"]+"' | cut -d '"' -f 4 | grep "/${ASSET}$" || true)"
-CHECKSUM_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url":\s*"[^"]+"' | cut -d '"' -f 4 | grep '/checksums.txt$' || true)"
-
-if [[ -z "$DOWNLOAD_URL" ]]; then
-  echo "Could not find asset ${ASSET} in release ${VERSION}"
-  exit 1
-fi
-if [[ -z "$CHECKSUM_URL" ]]; then
-  echo "Could not find checksums.txt in release ${VERSION}"
-  exit 1
-fi
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 ARCHIVE_PATH="$TMP_DIR/$ASSET"
 CHECKSUM_PATH="$TMP_DIR/checksums.txt"
-curl -fL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
-curl -fL "$CHECKSUM_URL" -o "$CHECKSUM_PATH"
+if ! curl -fL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"; then
+  echo "Could not download asset: ${ASSET} (${DOWNLOAD_URL})"
+  exit 1
+fi
+if ! curl -fL "$CHECKSUM_URL" -o "$CHECKSUM_PATH"; then
+  echo "Could not download checksums.txt (${CHECKSUM_URL})"
+  exit 1
+fi
 
 EXPECTED_SHA="$(grep -E "[[:space:]]${ASSET}\$" "$CHECKSUM_PATH" | awk '{print $1}' || true)"
 if [[ -z "$EXPECTED_SHA" ]]; then

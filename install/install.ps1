@@ -8,29 +8,22 @@ $ErrorActionPreference = "Stop"
 
 $asset = "landrop_windows_amd64.zip"
 if ($Version -eq "latest") {
-  $apiUrl = "https://api.github.com/repos/$Repo/releases/latest"
+  $assetUrl = "https://github.com/$Repo/releases/latest/download/$asset"
+  $checksumsUrl = "https://github.com/$Repo/releases/latest/download/checksums.txt"
 } else {
-  $apiUrl = "https://api.github.com/repos/$Repo/releases/tags/$Version"
+  $assetUrl = "https://github.com/$Repo/releases/download/$Version/$asset"
+  $checksumsUrl = "https://github.com/$Repo/releases/download/$Version/checksums.txt"
 }
 
 Write-Host "Resolving release: $Repo ($Version)"
-$release = Invoke-RestMethod -Uri $apiUrl
-$target = $release.assets | Where-Object { $_.name -eq $asset } | Select-Object -First 1
-$checksumsAsset = $release.assets | Where-Object { $_.name -eq "checksums.txt" } | Select-Object -First 1
-if (-not $target) {
-  throw "Could not find asset $asset in release $Version"
-}
-if (-not $checksumsAsset) {
-  throw "Could not find checksums.txt in release $Version"
-}
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $tmpZip = Join-Path $env:TEMP "landrop_windows_amd64.zip"
 $tmpChecksums = Join-Path $env:TEMP ("landrop_checksums_" + [guid]::NewGuid().ToString("N") + ".txt")
 $tmpDir = Join-Path $env:TEMP ("landrop_" + [guid]::NewGuid().ToString("N"))
 
-Invoke-WebRequest -UseBasicParsing -Uri $target.browser_download_url -OutFile $tmpZip
-Invoke-WebRequest -UseBasicParsing -Uri $checksumsAsset.browser_download_url -OutFile $tmpChecksums
+Invoke-WebRequest -UseBasicParsing -Uri $assetUrl -OutFile $tmpZip
+Invoke-WebRequest -UseBasicParsing -Uri $checksumsUrl -OutFile $tmpChecksums
 
 $checksums = Get-Content -Path $tmpChecksums
 $entry = $checksums | Where-Object { $_ -match "\s$asset$" } | Select-Object -First 1
