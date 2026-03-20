@@ -66,7 +66,7 @@ func main() {
 		ClipboardEnabled: *clipboard,
 		ClipboardReady:   clip.Supported(),
 		CopyToClipboard:  clip.CopyText,
-		MaxBodyBytes:     200 * 1024 * 1024,
+		MaxBodyBytes:     1024 * 1024 * 1024,
 	})
 
 	httpServer := &http.Server{
